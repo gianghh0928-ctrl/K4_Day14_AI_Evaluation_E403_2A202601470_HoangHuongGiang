@@ -266,6 +266,41 @@ class OpenAIGenerator:
         return answer
 
 
+class GeminiGenerator:
+    def __init__(self, max_output_tokens: int = 500) -> None:
+        api_key = os.getenv("GEMINI_API_KEY", "").strip()
+        self.model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash").strip()
+        if not api_key:
+            raise RuntimeError("GEMINI_API_KEY is missing from .env")
+        if not self.model:
+            raise RuntimeError("GEMINI_MODEL is missing from .env")
+        from google import genai
+        self.client = genai.Client(api_key=api_key)
+        self.max_output_tokens = max_output_tokens
+
+    def generate(self, prompt: str) -> str:
+        for attempt in range(6):
+            try:
+                response = self.client.models.generate_content(
+                    model=self.model,
+                    contents=prompt,
+                )
+                answer = (response.text or "").strip()
+                if not answer:
+                    raise RuntimeError("Gemini returned an empty answer")
+                time.sleep(3.5)
+                return answer
+            except Exception as exc:
+                exc_str = str(exc)
+                if "429" in exc_str or "RESOURCE_EXHAUSTED" in exc_str or "Quota exceeded" in exc_str:
+                    wait_time = 12 * (attempt + 1)
+                    print(f"\n[Gemini Rate Limit 429] Waiting {wait_time}s before retry (attempt {attempt + 1}/6)...", flush=True)
+                    time.sleep(wait_time)
+                else:
+                    raise
+        raise RuntimeError("Exceeded maximum retries for Gemini API due to rate limits.")
+
+
 @dataclass(frozen=True)
 class DomainResponse:
     question: str
@@ -296,10 +331,17 @@ class DomainAssistant:
         top_k: int = 5,
     ) -> DomainAssistant:
         corpus_id, chunks = load_corpus(corpus_dir)
+        if generator is None:
+            if os.getenv("GEMINI_API_KEY"):
+                generator = GeminiGenerator()
+            elif os.getenv("OPENAI_API_KEY"):
+                generator = OpenAIGenerator()
+            else:
+                raise RuntimeError("Neither GEMINI_API_KEY nor OPENAI_API_KEY is found in .env")
         return cls(
             corpus_id,
             BM25Retriever(chunks),
-            generator if generator is not None else OpenAIGenerator(),
+            generator,
             top_k,
         )
 
