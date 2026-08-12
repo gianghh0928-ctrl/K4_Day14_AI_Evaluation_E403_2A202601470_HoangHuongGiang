@@ -30,11 +30,11 @@ critical.
 
 | Metric | Acceptable Low Score Scenario | Critical Low Score Scenario | Action Required |
 |---|---|---|---|
-| Faithfulness | | | |
-| Answer Relevance | | | |
-| Context Recall | | | |
-| Context Precision | | | |
-| Completeness | | | |
+| Faithfulness | Trợ lý thêm lời chào lịch sự hoặc từ xã giao không có trong context nhưng thông tin chuyên môn hoàn toàn chính xác. | Trợ lý bịa đặt chính sách bảo hành, sai giá sản phẩm hoặc ngày hiệu lực (Hallucination nguy hiểm). | Thêm Grounding Guardrails trong system prompt; yêu cầu trích dẫn nguồn; hạ temperature về 0. |
+| Answer Relevance | Khách hàng hỏi câu cực ngắn (vd: "đổi trả?"), trợ lý giải thích đầy đủ quy trình nên trùng lặp từ ngữ ít. | Trợ lý trả lời lạc đề, không đúng trọng tâm khách hàng hỏi (vd: hỏi bảo hành laptop lại trả lời cấu hình). | Cải thiện Query Rewriter/Intent Classifier; tinh chỉnh system prompt để tập trung vào intent chính. |
+| Context Recall | Trợ lý chỉ lấy được thông tin cốt lõi để trả lời câu hỏi factual đơn giản mà bỏ qua thông tin phụ xung quanh. | Retriever bỏ sót hoàn toàn tài liệu/chunk chứa câu trả lời đúng (vd: thiếu quy định đổi trả hàng lỗi). | Tăng `top_k` retriever; cải thiện thuật toán tìm kiếm (Hybrid BM25 + Vector); điều chỉnh chunk size/overlap. |
+| Context Precision | Chunk đúng nằm ở vị trí thứ 2 hoặc thứ 3 thay vì vị trí thứ 1 trong top_k, nhưng vẫn đủ thông tin cho generator. | Chunk liên quan bị đẩy xuống cuối (vị trí 4-5) trong khi các vị trí top 1-2 chứa toàn thông tin rác/nhiễu. | Triển khai Reranker (Cross-Encoder / overlap scoring); tối ưu hóa thuật toán xếp hạng retriever. |
+| Completeness | Khách hàng hỏi 1 ý cụ thể và câu trả lời tập trung đúng ý đó, bỏ qua các điều kiện phụ không được hỏi tới. | Trả lời thiếu các bước quan trọng trong quy trình (vd: thiếu thông tin "cần mang theo hóa đơn mua hàng"). | Cập nhật Prompt Generation yêu cầu kiểm tra liệt kê đủ điều kiện; bổ sung thông tin từ retriever. |
 
 ### Exercise 1.2 — Bias trong LLM-as-a-Judge
 
@@ -47,14 +47,26 @@ Ba bias thường gặp:
 **Câu 1: Thiết kế experiment phát hiện position bias với ít nhất hai conditions.**
 
 > *Câu trả lời:*
+> - **Mục tiêu**: Kiểm tra xem LLM Judge có thiên vị đáp án đứng ở vị trí đầu tiên (Candidate A) hay không.
+> - **Tập test**: Chọn 10-20 cặp câu trả lời (Answer 1 và Answer 2) cho cùng một câu hỏi từ hệ thống.
+> - **Condition 1 (Original Order)**: Đưa vào prompt đánh giá với thứ tự: `Candidate A: Answer 1`, `Candidate B: Answer 2`.
+> - **Condition 2 (Swapped Order)**: Tráo đổi vị trí: `Candidate A: Answer 2`, `Candidate B: Answer 1`.
+> - **Đánh giá**: So sánh kết quả của 2 Condition. Nếu điểm của Answer 1 ở Condition 1 cao hơn hẳn khi nó trở thành Candidate B ở Condition 2 (chỉ vì vị trí xuất hiện), ta kết luận LLM Judge bị Position Bias.
+> - **Khắc phục**: Chạy eval ở cả 2 vị trí và lấy điểm trung bình (Position Swapping / Pairwise Averaging).
 
 **Câu 2: Làm thế nào giảm verbosity bias bằng rubric design?**
 
 > *Câu trả lời:*
+> 1. **Định nghĩa tiêu chí Mật độ thông tin (Information Density)**: Quy định điểm số dựa trên sự chính xác và súc tích, không phụ thuộc vào độ dài từ ngữ.
+> 2. **Thiết lập quy tắc trừ điểm rào rào (Penalty Rule)**: Thêm câu lệnh rõ ràng trong Rubric: *"Nếu câu trả lời chứa thông tin thừa thãi, lặp từ, hoặc câu từ rườm rà không trực tiếp trả lời câu hỏi, trừ 1 điểm (tối đa đạt 4 điểm)"*.
+> 3. **Cung cấp Few-shot Calibration Examples**: Đưa vào prompt các ví dụ mẫu (Few-shot): Ví dụ đáp án ngắn gọn nhưng đạt 5/5, và ví dụ đáp án rất dài nhưng bị 2/5 do rườm rà.
 
 **Câu 3: Tại sao cần calibrate LLM judge với human labels?**
 
 > *Câu trả lời:*
+> 1. **Phát hiện Bias ẩn**: LLM Judge có thể mắc các lỗi hệ thống như Self-preference, Verbosity Bias, hoặc hiểu sai quy định riêng của OrbitTech Store.
+> 2. **Đảm bảo tính tin cậy (Alignment)**: Đo lường độ tương quan (ví dụ: Cohen's Kappa hoặc Spearman Correlation) giữa điểm số LLM Judge và điểm số từ Chuyên gia Domain/Human Annotator.
+> 3. **Cải tiến Rubric & Prompt**: Giúp tinh chỉnh lại Rubric và Prompt của Judge đến khi độ tương quan với con người đạt mức tin cậy (vd: >= 0.85) trước khi đưa vào tự động hóa hoàn toàn.
 
 ### Exercise 1.3 — Evaluation trong CI/CD
 
@@ -62,36 +74,24 @@ Ba bias thường gặp:
 
 | Metric | Threshold | Lý do |
 |---|---:|---|
-| Faithfulness | | |
-| Answer Relevance | | |
-| Completeness | | |
+| Faithfulness | **0.90 (90%)** | Bị đặt/sai thông tin (Hallucination) trong hỗ trợ khách hàng dễ dẫn đến khiếu nại, mất uy tín thương hiệu và thiệt hại tài chính. Đây là chỉ số quan trọng nhất không được thỏa hiệp. |
+| Answer Relevance | **0.80 (80%)** | Đảm bảo câu trả lời trực tiếp giải quyết vấn đề của khách hàng, tránh trả lời lan man hoặc lạc đề gây lãng phí thời gian người dùng. |
+| Completeness | **0.75 (75%)** | Đảm bảo cung cấp đủ thông tin và các bước hướng dẫn cần thiết cho khách hàng, tránh trả lời cộc lốc hoặc thiếu bước xử lý quan trọng. |
 
 **Câu 2: Khi nào dùng offline evaluation, online evaluation và human review?**
 
 > *Câu trả lời:*
+> - **Offline Evaluation (Đánh giá ngoại tuyến)**:
+>   * *Khi nào dùng*: Sử dụng trong quá trình phát triển (Development), trước mỗi đợt Release, khi thay đổi Prompt, cập nhật Model hoặc sửa đổi Retrieval Pipeline.
+>   * *Đặc điểm*: Chạy tự động trên Golden Dataset 20–100+ câu hỏi bằng pytest/RAGAS để làm Quality Gate trong CI/CD Pipeline.
+> - **Online Evaluation (Đánh giá trực tuyến)**:
+>   * *Khi nào dùng*: Sử dụng liên tục trên môi trường Production với dữ liệu chat thực tế của người dùng (Real User Traffic).
+>   * *Đặc điểm*: Theo dõi các thông số thời gian thực (latency, user thumbs up/down, implicit feedback) hoặc sample 5-10% traffic cho LLM Judge đánh giá để phát hiện Data Drift và sự cố tức thì.
+> - **Human Review (Đánh giá bởi con người)**:
+>   * *Khi nào dùng*: Thực hiện định kỳ (hàng tuần/tháng), khi cần Calibrate (hiệu chỉnh) LLM Judge, hoặc kiểm tra các ca lỗi nghiêm trọng (Incident analysis, Edge cases khó).
+>   * *Đặc điểm*: Do chuyên gia/Annotator chấm tay dựa trên Rubric để đảm bảo tính chính xác cao nhất và bổ sung mẫu mới vào Golden Dataset.
 
 ---
-
-## Part 2 — Core Coding (14:45–15:40)
-
-Hoàn thiện các TODO bắt buộc trong `template.py`.
-
-### Task 1 — Data Models
-
-- `QAPair`: question, expected answer, gold context, metadata và retrieved contexts.
-- `EvalResult`: answer-side scores, optional retrieval scores, pass/failure fields.
-- `overall_score()`: trung bình Faithfulness, Relevance và Completeness.
-
-### Task 2 — RAGASEvaluator
-
-Answer-side:
-
-- `evaluate_faithfulness(answer, context)`
-- `evaluate_relevance(answer, question)`
-- `evaluate_completeness(answer, expected)`
-
-Retrieval-side:
-
 - `evaluate_context_recall(contexts, expected)`
 - `evaluate_context_precision(contexts, expected)`
 
